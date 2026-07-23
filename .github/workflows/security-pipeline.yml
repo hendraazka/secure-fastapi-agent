@@ -83,9 +83,6 @@ jobs:
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true"
           GITLEAKS_ENABLE_SUMMARY: "true"
           GITLEAKS_EXIT_CODE: "0"
-        with:
-          config-path: .gitleaks.toml
-        continue-on-error: true
 
       # gitleaks-action outputnya beda struktur (results.sarif secara default);
       # baris ini pastikan ada juga versi JSON mentah untuk parser kita.
