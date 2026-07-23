@@ -1,0 +1,128 @@
+name: Security Pipeline (4 Gates)
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      # fetch-depth: 0 WAJIB untuk Gitleaks — kalau tidak, cuma commit
+      # terakhir yang di-scan, bukan seluruh history.
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Buat folder hasil scan
+        run: mkdir -p scan_results
+
+      - name: Install dependencies proyek
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ---------------------------------------------------------------
+      # GATE 1 — Bandit (SAST, Python-native)
+      # ---------------------------------------------------------------
+      - name: Install Bandit
+        run: pip install bandit
+
+      - name: Gate 1 - Bandit SAST
+        run: |
+          bandit -r . \
+            --exclude ./venv,./.venv,./tests \
+            -f json -o scan_results/bandit.json
+        # exit-zero: jangan langsung gagalkan job di sini — biar 4 gate
+        # semua sempat jalan dan hasilnya lengkap buat agent triage nanti.
+        # Fail-nya diputuskan terpusat di step "Evaluate gates" di bawah.
+        continue-on-error: true
+
+      # ---------------------------------------------------------------
+      # GATE 2 — pip-audit (SCA, dependency vulnerabilities)
+      # ---------------------------------------------------------------
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Gate 2 - pip-audit SCA
+        run: |
+          pip-audit -r requirements.txt \
+            --format json --output scan_results/pip-audit.json
+        continue-on-error: true
+
+      # ---------------------------------------------------------------
+      # GATE 3 — Trivy (filesystem + dependency scan)
+      # ---------------------------------------------------------------
+      - name: Gate 3 - Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: json
+          output: scan_results/trivy.json
+          severity: LOW,MEDIUM,HIGH,CRITICAL
+          exit-code: "0" # sama alasannya dengan Bandit di atas
+
+      # ---------------------------------------------------------------
+      # GATE 4 — Gitleaks (secret scanning, perlu full history)
+      # ---------------------------------------------------------------
+      - name: Gate 4 - Gitleaks secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true"
+          GITLEAKS_ENABLE_SUMMARY: "true"
+          GITLEAKS_EXIT_CODE: "0"
+        with:
+          config-path: .gitleaks.toml
+        continue-on-error: true
+
+      # gitleaks-action outputnya beda struktur (results.sarif secara default);
+      # baris ini pastikan ada juga versi JSON mentah untuk parser kita.
+      - name: Normalisasi output Gitleaks ke JSON
+        run: |
+          if [ -f results.sarif ]; then
+            cp results.sarif scan_results/gitleaks.json
+          else
+            echo "[]" > scan_results/gitleaks.json
+          fi
+
+      # ---------------------------------------------------------------
+      # Gabungkan 4 hasil pakai scan_parsers.py
+      # ---------------------------------------------------------------
+      - name: Gabungkan hasil scan
+        run: python scan_parsers.py
+
+      - name: Upload scan results (untuk agent triage - Fase 3)
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-results
+          path: scan_results/
+          retention-days: 14
+
+      # ---------------------------------------------------------------
+      # Keputusan gagal/lulus terpusat di sini, bukan tersebar per gate
+      # ---------------------------------------------------------------
+      - name: Evaluate gates - gagalkan kalau ada temuan HIGH/CRITICAL
+        run: |
+          python -c "
+          import json, sys
+          findings = json.load(open('scan_results/combined.json'))
+          high = [f for f in findings if f['severity'] in ('HIGH', 'CRITICAL')]
+          if high:
+              print(f'{len(high)} temuan HIGH/CRITICAL ditemukan:')
+              for f in high:
+                  print(f\"  [{f['tool']}] {f['title']} ({f['location']})\")
+              sys.exit(1)
+          print('Tidak ada temuan HIGH/CRITICAL.')
+          "
