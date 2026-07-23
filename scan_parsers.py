@@ -49,18 +49,40 @@ def parse_gitleaks(path: str) -> list[dict]:
     """
     Gitleaks TIDAK punya field severity.
     Keputusan desain: setiap secret yang bocor = HIGH, tanpa pengecualian.
-    Ini keputusan kamu sendiri yang harus didokumentasikan di README,
-    bukan default tersembunyi.
+
+    Output gitleaks-action berformat SARIF (dict dengan key "runs"),
+    BUKAN list datar. Kalau tidak ada leak, workflow kita nulis "[]"
+    (list kosong) sebagai fallback -- jadi fungsi ini harus menangani
+    dua bentuk: dict SARIF asli, atau list kosong dari fallback.
     """
-    data = json.loads(Path(path).read_text())
+    raw = Path(path).read_text().strip()
+    if not raw or raw in ("[]", "null"):
+        return []
+
+    data = json.loads(raw)
+    if isinstance(data, list):
+        return []
+
     findings = []
-    for item in data:  # gitleaks output = list JSON, bukan dict
-        findings.append({
-            "tool": "gitleaks",
-            "severity": "HIGH",
-            "title": f"Secret terdeteksi: {item.get('RuleID', 'unknown-rule')}",
-            "location": f"{item.get('File', '?')}:{item.get('StartLine', '?')}",
-        })
+    for run in data.get("runs", []):
+        for result in run.get("results", []):
+            rule_id = result.get("ruleId", "unknown-rule")
+            message = result.get("message", {}).get("text", "")
+
+            location = "?"
+            locations = result.get("locations", [])
+            if locations:
+                phys = locations[0].get("physicalLocation", {})
+                uri = phys.get("artifactLocation", {}).get("uri", "?")
+                line = phys.get("region", {}).get("startLine", "?")
+                location = f"{uri}:{line}"
+
+            findings.append({
+                "tool": "gitleaks",
+                "severity": "HIGH",
+                "title": f"Secret terdeteksi: {rule_id} - {message}".strip(" -"),
+                "location": location,
+            })
     return findings
 
 
