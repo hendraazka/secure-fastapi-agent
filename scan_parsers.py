@@ -15,10 +15,6 @@ Dipakai oleh node `read_findings` di security_triage_graph.py
 import json
 from pathlib import Path
 
-import subprocess
-subprocess.call("ls " + user_input, shell=True)  # shell injection klasik
-
-
 def parse_bandit(path: str) -> list[dict]:
     """Bandit punya field severity native — tinggal mapping langsung."""
     data = json.loads(Path(path).read_text())
