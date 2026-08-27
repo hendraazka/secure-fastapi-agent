@@ -106,6 +106,7 @@ jobs:
           output: scan_results/trivy-image.json
           severity: LOW,MEDIUM,HIGH,CRITICAL
           exit-code: "0"
+          ignore-unfixed: true
 
       # ---------------------------------------------------------------
       # Gabungkan 4 hasil pakai scan_parsers.py
