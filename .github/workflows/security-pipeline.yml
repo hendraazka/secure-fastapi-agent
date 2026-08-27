@@ -159,3 +159,29 @@ jobs:
 
       - name: Run tests with coverage
         run: pytest --cov=app --cov-report=term-missing --cov-fail-under=70
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: [security-scan, unit-tests]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login ke GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/hendraazka/secure-fastapi-agent:latest
+            ghcr.io/hendraazka/secure-fastapi-agent:${{ github.sha }}

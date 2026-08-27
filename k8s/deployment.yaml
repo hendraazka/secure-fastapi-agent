@@ -17,9 +17,8 @@ spec:
     spec:
       containers:
         - name: secure-fastapi-agent
-          image: secure-fastapi-agent:local
-          imagePullPolicy: Never   # WAJIB -- larang k8s coba pull dari registry,
-                                    # paksa pakai image yang sudah di-load manual
+          image: ghcr.io/hendraazka/secure-fastapi-agent:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
           readinessProbe:
