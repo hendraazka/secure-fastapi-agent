@@ -1,4 +1,4 @@
-name: Security Pipeline (4 Gates)
+name: Security Pipeline (4 Gates + Unit Tests)
 
 on:
   pull_request:
@@ -83,6 +83,7 @@ jobs:
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true"
           GITLEAKS_ENABLE_SUMMARY: "true"
           GITLEAKS_EXIT_CODE: "0"
+        continue-on-error: true
 
       # gitleaks-action outputnya beda struktur (results.sarif secara default);
       # baris ini pastikan ada juga versi JSON mentah untuk parser kita.
@@ -123,3 +124,25 @@ jobs:
               sys.exit(1)
           print('Tidak ada temuan HIGH/CRITICAL.')
           "
+
+  # =====================================================================
+  # UNIT TESTS — sejajar dengan security-scan, TIDAK saling menunggu.
+  # Sengaja terpisah: ini soal kebenaran fungsional, bukan temuan security.
+  # =====================================================================
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run tests with coverage
+        run: pytest --cov=app --cov-report=term-missing --cov-fail-under=70

@@ -1,0 +1,4 @@
+# requirements-dev.txt (baru, khusus testing)
+pytest
+httpx
+pytest-cov
