@@ -43,6 +43,22 @@ def parse_trivy(path: str) -> list[dict]:
             })
     return findings
 
+def parse_trivy_image(path: str) -> list[dict]:
+    """
+    Sama seperti parse_trivy, tapi untuk hasil scan image (bukan filesystem).
+    Dipisah jadi fungsi sendiri supaya sumbernya jelas dibedakan di 'tool' field.
+    """
+    data = json.loads(Path(path).read_text())
+    findings = []
+    for result in data.get("Results", []) or []:
+        for vuln in result.get("Vulnerabilities", []) or []:
+            findings.append({
+                "tool": "trivy-image",
+                "severity": vuln.get("Severity", "LOW").upper(),
+                "title": f"{vuln['VulnerabilityID']}: {vuln.get('Title', '')}",
+                "location": result.get("Target", "unknown"),
+            })
+    return findings
 
 def parse_gitleaks(path: str) -> list[dict]:
     """
@@ -103,17 +119,17 @@ def parse_pip_audit(path: str) -> list[dict]:
             })
     return findings
 
-
 def combine_all(bandit_path: str, trivy_path: str,
-                 gitleaks_path: str, pip_audit_path: str) -> list[dict]:
-    """Gabungkan 4 sumber jadi satu list untuk dilempar ke TriageState."""
+                 gitleaks_path: str, pip_audit_path: str,
+                 trivy_image_path: str) -> list[dict]:
+    """Parser & normalizer untuk 5 gate proyek FastAPI DevSecOps baru.Menyatukan output Bandit, Trivy (filesystem), Trivy (image), Gitleaks, pip-audit ke satu skema:"""
     findings = []
     findings += parse_bandit(bandit_path)
     findings += parse_trivy(trivy_path)
     findings += parse_gitleaks(gitleaks_path)
     findings += parse_pip_audit(pip_audit_path)
+    findings += parse_trivy_image(trivy_image_path)
     return findings
-
 
 if __name__ == "__main__":
     # sesuaikan path output tiap tool dari GitHub Actions artifact
@@ -122,6 +138,7 @@ if __name__ == "__main__":
         trivy_path="scan_results/trivy.json",
         gitleaks_path="scan_results/gitleaks.json",
         pip_audit_path="scan_results/pip-audit.json",
+        trivy_image_path="scan_results/trivy-image.json",
     )
     Path("scan_results/combined.json").write_text(json.dumps(combined, indent=2))
     print(f"{len(combined)} findings digabungkan -> scan_results/combined.json")

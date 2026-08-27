@@ -95,6 +95,18 @@ jobs:
             echo "[]" > scan_results/gitleaks.json
           fi
 
+      - name: Build image untuk scan
+        run: docker build -t secure-fastapi-agent:${{ github.sha }} .
+
+      - name: Gate 5 - Trivy image scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: secure-fastapi-agent:${{ github.sha }}
+          format: json
+          output: scan_results/trivy-image.json
+          severity: LOW,MEDIUM,HIGH,CRITICAL
+          exit-code: "0"
+
       # ---------------------------------------------------------------
       # Gabungkan 4 hasil pakai scan_parsers.py
       # ---------------------------------------------------------------
