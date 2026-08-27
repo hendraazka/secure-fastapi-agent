@@ -1,0 +1,4 @@
+# CVE-2026-14456 (openssl QUIC DoS) - belum ada patch stabil dari Debian per 2026-08-27.
+# Aplikasi ini tidak menggunakan fitur QUIC server dari OpenSSL secara langsung
+# (FastAPI/uvicorn tidak expose QUIC). Risiko diterima sementara, review ulang tiap build.
+CVE-2026-14456
