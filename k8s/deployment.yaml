@@ -1,0 +1,36 @@
+# k8s/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secure-fastapi-agent
+  labels:
+    app: secure-fastapi-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: secure-fastapi-agent
+  template:
+    metadata:
+      labels:
+        app: secure-fastapi-agent
+    spec:
+      containers:
+        - name: secure-fastapi-agent
+          image: secure-fastapi-agent:local
+          imagePullPolicy: Never   # WAJIB -- larang k8s coba pull dari registry,
+                                    # paksa pakai image yang sudah di-load manual
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 15

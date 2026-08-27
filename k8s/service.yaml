@@ -1,0 +1,12 @@
+# k8s/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: secure-fastapi-agent
+spec:
+  selector:
+    app: secure-fastapi-agent
+  ports:
+    - port: 8000
+      targetPort: 8000
+  type: ClusterIP
