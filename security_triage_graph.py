@@ -19,6 +19,8 @@ from typing import TypedDict, Literal
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
 from langchain_google_genai import ChatGoogleGenerativeAI
+from google.genai.errors import ClientError
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from scan_parsers import combine_all
 
@@ -58,6 +60,27 @@ def extract_text(response) -> str:
         if isinstance(first, dict):
             return first.get("text", "")
     return str(content)
+
+
+@retry(
+    # Retry hanya untuk error yang genuinely transient (rate limit,
+    # server overload) -- BUKAN untuk semua error. Kalau error-nya
+    # soal API key salah/model tidak ada, retry tidak akan membantu,
+    # cuma buang waktu.
+    retry=retry_if_exception_type(ClientError),
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=2, min=2, max=30),
+    reraise=True,
+)
+def invoke_with_retry(llm_instance, prompt: str):
+    """
+    Panggil LLM dengan retry + exponential backoff.
+    Percobaan: 1 (langsung), lalu tunggu ~2s, ~4s, ~8s sebelum nyerah
+    di percobaan ke-4. Total maksimal ~4 percobaan sebelum benar-benar
+    gagal (reraise=True -- error asli tetap dilempar ke pemanggil,
+    bukan ditelan diam-diam).
+    """
+    return llm_instance.invoke(prompt)
 
 
 # ---------------------------------------------------------------------------
@@ -148,8 +171,18 @@ def summarize(state: TriageState) -> dict:
         "sudah diberikan di atas:\n\n"
         f"{json.dumps(findings[:10], indent=2)}"
     )
-    response = llm.invoke(prompt)
-    llm_narrative = extract_text(response)
+    try:
+        response = invoke_with_retry(llm, prompt)
+        llm_narrative = extract_text(response)
+    except ClientError as e:
+        # Retry sudah habis (rate limit/overload berkepanjangan) --
+        # statistik akurat tetap tersedia, cuma narasi AI yang gagal.
+        # Pipeline TIDAK perlu ikut gagal cuma karena ini.
+        llm_narrative = (
+            f"_(Gagal menghasilkan ringkasan naratif setelah beberapa "
+            f"percobaan -- kemungkinan rate limit API tercapai. "
+            f"Error: {e})_"
+        )
 
     # Statistik akurat tetap disertakan eksplisit di luar hasil LLM,
     # sebagai jaring pengaman kalau LLM tetap mengarang angka lagi.
