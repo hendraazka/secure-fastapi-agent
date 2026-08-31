@@ -198,3 +198,9 @@ if __name__ == "__main__":
     })
     print("Severity:", result["severity"])
     print("Summary:\n", result["summary"])
+
+    # Tulis ke file supaya bisa dipakai step CI berikutnya (post PR comment)
+    with open("triage_output.md", "w") as f:
+        f.write(f"## 🤖 AI Security Triage\n\n")
+        f.write(f"**Severity terdeteksi:** `{result['severity']}`\n\n")
+        f.write(result["summary"])

@@ -160,6 +160,40 @@ jobs:
       - name: Run tests with coverage
         run: pytest --cov=app --cov-report=term-missing --cov-fail-under=70
 
+  ai-triage:
+    runs-on: ubuntu-latest
+    needs: [security-scan]
+    if: always()
+    continue-on-error: true # non-blocking, sesuai rencana Hari 14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-agent.txt
+
+      - name: Download hasil scan dari job security-scan
+        uses: actions/download-artifact@v4
+        with:
+          name: scan-results
+          path: scan_results
+
+      - name: Jalankan AI triage
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: python security_triage_graph.py
+
+      - name: Upload hasil triage sebagai artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-triage-output
+          path: triage_output.md
+
   build-and-push:
     runs-on: ubuntu-latest
     needs: [security-scan, unit-tests]
