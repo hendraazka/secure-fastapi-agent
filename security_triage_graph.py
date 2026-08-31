@@ -68,7 +68,22 @@ def read_findings(state: TriageState) -> dict:
     Ambil hasil scan dari 5 gate lewat scan_parsers.combine_all --
     reuse parser yang sudah divalidasi sejak Hari 2-5, bukan baca
     ulang combined.json secara independen.
+
+    Testable by design: kalau raw_findings SUDAH diisi manual di state
+    awal (dipakai test_scenarios.py di Hari 13), node ini skip baca
+    file dan langsung pakai data yang diberikan -- supaya skenario
+    palsu bisa diuji tanpa perlu menimpa file scan_results/ asli.
+
+    PENTING: pakai `is not None`, BUKAN truthy check biasa (`if x:`).
+    List kosong ([]) itu falsy di Python, jadi `if state.get(...)`
+    akan salah mengira skenario "kosong" sebagai "belum diisi" dan
+    tetap baca file asli -- persis bug yang ditemukan waktu testing
+    skenario "kosong" di Hari 13 (hasilnya 32 temuan dari file asli,
+    padahal seharusnya 0).
     """
+    if state.get("raw_findings") is not None:
+        return {"raw_findings": state["raw_findings"]}
+
     findings = combine_all(
         bandit_path="scan_results/bandit.json",
         trivy_path="scan_results/trivy.json",
@@ -178,7 +193,7 @@ if __name__ == "__main__":
 
     app = build_graph()
     result = app.invoke({
-        "raw_findings": [], "severity": None,
+        "raw_findings": None, "severity": None,
         "flagged_findings": [], "noted_findings": [], "summary": "",
     })
     print("Severity:", result["severity"])
