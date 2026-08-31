@@ -5,6 +5,7 @@ Uji routing graph (flag_for_review vs auto_note) untuk beberapa
 kondisi berbeda, tanpa perlu menimpa scan_results/ asli tiap kali.
 
 ## Alur
+```
 test_scenarios.py
 │
 ├─ scenario "semua_low" ─┐
@@ -22,6 +23,7 @@ classify_severity -> routing -> summarize
 │
 ▼
 Assertion: severity yang terdeteksi dibandingkan ekspektasi
+```
 
 
 ## Yang dikerjakan
