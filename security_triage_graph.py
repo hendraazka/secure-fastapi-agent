@@ -19,7 +19,7 @@ from typing import TypedDict, Literal
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
 from langchain_google_genai import ChatGoogleGenerativeAI
-from google.genai.errors import ClientError
+from langchain_google_genai._common import GoogleGenerativeAIError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from scan_parsers import combine_all
@@ -69,11 +69,23 @@ def extract_text(response) -> str:
 
 
 @retry(
-    # Retry hanya untuk error yang genuinely transient (rate limit,
-    # server overload) -- BUKAN untuk semua error. Kalau error-nya
-    # soal API key salah/model tidak ada, retry tidak akan membantu,
-    # cuma buang waktu.
-    retry=retry_if_exception_type(ClientError),
+    # Tangkap base class GoogleGenerativeAIError -- ini mencakup SEMUA
+    # error dari langchain_google_genai (rate limit, server error,
+    # invalid request, auth, dst), karena versi library ini membungkus
+    # ulang error asli (termasuk ClientError dari google-genai SDK)
+    # jadi exception class miliknya sendiri.
+    #
+    # BUG Hari 16: awalnya cuma nangkep google.genai.errors.ClientError
+    # -- tidak pernah ke-trigger sama sekali, karena error yang
+    # benar-benar dilempar adalah GoogleInvalidRequestError (subclass
+    # GoogleGenerativeAIError), bukan ClientError. Retry gak jalan,
+    # fallback gak kepicu, script crash total. Base class ini fix-nya.
+    #
+    # Trade-off: retry jadi kepicu juga untuk error non-transient
+    # (misal API key salah) yang sebenarnya percuma di-retry -- itu
+    # cuma buang beberapa detik, jauh lebih aman daripada tidak
+    # tertangkap sama sekali.
+    retry=retry_if_exception_type(GoogleGenerativeAIError),
     stop=stop_after_attempt(4),
     wait=wait_exponential(multiplier=2, min=2, max=30),
     reraise=True,
@@ -99,7 +111,7 @@ def invoke_with_fallback(prompt: str) -> tuple[str, str]:
     try:
         response = invoke_with_retry(llm, prompt)
         return extract_text(response), "gemini-3.6-flash"
-    except ClientError:
+    except GoogleGenerativeAIError:
         # Retry sudah habis di invoke_with_retry -- ini genuinely
         # gagal total, bukan gangguan sesaat. Baru sekarang fallback.
         try:
