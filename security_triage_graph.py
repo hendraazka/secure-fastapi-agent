@@ -43,6 +43,12 @@ class TriageState(TypedDict):
 # ---------------------------------------------------------------------------
 llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash")
 
+# Fallback -- dipakai HANYA kalau Gemini gagal total setelah retry habis.
+# Model kecil, cukup untuk merangkum teks pendek, tidak perlu sekuat
+# Gemini karena statistik akurat sudah dihitung Python, bukan LLM.
+from langchain_ollama import ChatOllama
+fallback_llm = ChatOllama(model="llama3.1:8b", temperature=0)
+
 
 def extract_text(response) -> str:
     """
@@ -81,6 +87,31 @@ def invoke_with_retry(llm_instance, prompt: str):
     bukan ditelan diam-diam).
     """
     return llm_instance.invoke(prompt)
+
+
+def invoke_with_fallback(prompt: str) -> tuple[str, str]:
+    """
+    Orkestrasi: coba Gemini (dengan retry) dulu -- HANYA kalau retry
+    itu benar-benar habis (bukan di percobaan pertama), baru pindah
+    ke Ollama lokal. Return (teks_hasil, nama_provider_yang_dipakai)
+    supaya jelas di output provider mana yang benar-benar merespons.
+    """
+    try:
+        response = invoke_with_retry(llm, prompt)
+        return extract_text(response), "gemini-3.6-flash"
+    except ClientError:
+        # Retry sudah habis di invoke_with_retry -- ini genuinely
+        # gagal total, bukan gangguan sesaat. Baru sekarang fallback.
+        try:
+            response = fallback_llm.invoke(prompt)
+            return extract_text(response), "ollama (llama3.1:8b, fallback)"
+        except Exception as ollama_error:
+            # Dua-duanya gagal -- Ollama kemungkinan tidak jalan lokal
+            # (wajar kalau ini di CI, tidak ada Ollama server di sana).
+            raise RuntimeError(
+                f"Gemini gagal (rate limit habis) DAN Ollama fallback "
+                f"juga gagal: {ollama_error}"
+            ) from ollama_error
 
 
 # ---------------------------------------------------------------------------
@@ -172,17 +203,14 @@ def summarize(state: TriageState) -> dict:
         f"{json.dumps(findings[:10], indent=2)}"
     )
     try:
-        response = invoke_with_retry(llm, prompt)
-        llm_narrative = extract_text(response)
-    except ClientError as e:
-        # Retry sudah habis (rate limit/overload berkepanjangan) --
-        # statistik akurat tetap tersedia, cuma narasi AI yang gagal.
+        llm_narrative, provider_used = invoke_with_fallback(prompt)
+        if provider_used != "gemini-3.6-flash":
+            llm_narrative = f"⚠️ _(Dihasilkan via {provider_used}, Gemini tidak tersedia)_\n\n{llm_narrative}"
+    except RuntimeError as e:
+        # Gemini DAN Ollama fallback dua-duanya gagal -- statistik
+        # akurat tetap tersedia, cuma narasi AI yang gagal total.
         # Pipeline TIDAK perlu ikut gagal cuma karena ini.
-        llm_narrative = (
-            f"_(Gagal menghasilkan ringkasan naratif setelah beberapa "
-            f"percobaan -- kemungkinan rate limit API tercapai. "
-            f"Error: {e})_"
-        )
+        llm_narrative = f"_(Semua provider LLM gagal. Error: {e})_"
 
     # Statistik akurat tetap disertakan eksplisit di luar hasil LLM,
     # sebagai jaring pengaman kalau LLM tetap mengarang angka lagi.
