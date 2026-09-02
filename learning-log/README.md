@@ -28,8 +28,8 @@ dalam 1 sesi.
 | 14 | [Sambungkan Graph ke Pipeline CI](./day-14-ci-integration.md) | ✅ |
 | 15 | [Rate Limit Handling](./day-15-rate-limit.md) | ✅ |
 | 16 | [Fallback ke Ollama](./day-16-ollama-fallback.md) | ✅ |
-| 17 | Dokumentasi Arsitektur Lengkap | 🔄 Berjalan |
-| 18 | Review Total & Portofolio | 🔜 |
+| 17 | Dokumentasi Arsitektur Lengkap | ✅ |
+| 18 | [Review Total & Portofolio](./day-18-final-review.md) | ✅ |
 
 ## Stack
 - Python (FastAPI)
