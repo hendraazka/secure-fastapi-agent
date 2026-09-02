@@ -1,45 +1,35 @@
 # secure-fastapi-agent
 
 Proyek belajar DevSecOps + Agentic AI — pipeline security di sekitar
-aplikasi FastAPI, dari kode sampai deploy ke Kubernetes, dengan rencana
-integrasi agent (LangGraph) untuk triase temuan security secara otomatis.
+aplikasi FastAPI, dari kode sampai deploy ke Kubernetes, dengan agent
+berbasis LangGraph yang mentriase temuan security secara otomatis.
 
 Proyek ini terpisah dari [devsecops-homelab](https://github.com/hendraazka/devsecops-homelab)
 (Spring Boot, 7-gate pipeline) — sengaja dibuat dengan stack berbeda
 (Python/FastAPI) untuk memperluas pemahaman DevSecOps di ekosistem lain,
-sekaligus jadi tempat eksplorasi agentic AI.
+sekaligus jadi tempat eksplorasi agentic AI dengan budget $0.
 
 ## Status
-🚧 Dalam pengembangan aktif — Fase 2 (testing, container, Kubernetes)
-selesai. Lihat progres detail per tahap di [`learning-log/`](./learning-log/README.md).
+✅ Fase 1-4 selesai (Hari 1-17). Lihat progres detail per tahap di
+[`learning-log/`](./learning-log/README.md).
 
-## Arsitektur Pipeline
+## Arsitektur Pipeline (Security Gates)
 
 5 gate security + 1 gate testing berjalan otomatis via GitHub Actions
 setiap push/PR ke `main`:
 
-| Gate | Tool | Jenis | Output |
-|---|---|---|---|
-| 1 | [Bandit](https://github.com/PyCQA/bandit) | SAST — analisis statis kode Python | `scan_results/bandit.json` |
-| 2 | [pip-audit](https://github.com/pypa/pip-audit) | SCA — kerentanan dependency Python | `scan_results/pip-audit.json` |
-| 3 | [Trivy](https://github.com/aquasecurity/trivy) | Filesystem & dependency scan | `scan_results/trivy.json` |
-| 4 | [Gitleaks](https://github.com/gitleaks/gitleaks) | Secret scanning | `scan_results/gitleaks.json` |
-| 5 | [Trivy (image)](https://github.com/aquasecurity/trivy) | Kerentanan di base image Docker | `scan_results/trivy-image.json` |
-| — | pytest + coverage | Kebenaran fungsional (job terpisah, independen) | — |
+| Gate | Tool | Jenis |
+|---|---|---|
+| 1 | [Bandit](https://github.com/PyCQA/bandit) | SAST — analisis statis kode Python |
+| 2 | [pip-audit](https://github.com/pypa/pip-audit) | SCA — kerentanan dependency Python |
+| 3 | [Trivy](https://github.com/aquasecurity/trivy) | Filesystem & dependency scan |
+| 4 | [Gitleaks](https://github.com/gitleaks/gitleaks) | Secret scanning |
+| 5 | [Trivy (image)](https://github.com/aquasecurity/trivy) | Kerentanan di base image Docker |
+| — | pytest + coverage | Kebenaran fungsional (job independen) |
 
 Hasil ke-5 gate security digabungkan (`scan_parsers.py`) jadi satu
-format, lalu dievaluasi terpusat — pipeline gagal kalau ada temuan
+format, dievaluasi terpusat — pipeline gagal kalau ada temuan
 `HIGH`/`CRITICAL` yang belum ada di `.trivyignore`.
-
-```
-scan_results/
-├── bandit.json
-├── pip-audit.json
-├── trivy.json
-├── trivy-image.json
-├── gitleaks.json
-└── combined.json      <- hasil normalisasi, dipakai step evaluasi & (nanti) agent
-```
 
 ## Arsitektur Deploy
 
@@ -47,66 +37,114 @@ scan_results/
 Kode (push ke main)
       │
       ▼
-┌─────────────────────────────────────┐
-│  GitHub Actions                       │
-│  1. security-scan (5 gate)  ──┐       │
-│  2. unit-tests            ──┤       │
-│                              ▼       │
-│  3. build-and-push (needs: 1 & 2)     │
-│     - build image                     │
-│     - push ke GHCR (2 tag: latest,    │
-│       SHA commit)                     │
-└─────────────────────────────────────┘
+┌───────────────────────────────────────────┐
+│  GitHub Actions                             │
+│  1. security-scan (5 gate)  ──┬──────────┐ │
+│  2. unit-tests               ─┤          │ │
+│                                ▼          ▼ │
+│  3. build-and-push            4. ai-triage │
+│     (needs: 1, 2)                (needs: 1)│
+│     - build & push GHCR          (non-block│
+│                                    if: always)│
+└───────────────────────────────────────────┘
+      │                              │
+      ▼                              ▼
+GHCR: ghcr.io/.../secure-      triage_output.md
+fastapi-agent                  (artifact, komentar PR)
       │
-      ▼
-GHCR: ghcr.io/hendraazka/secure-fastapi-agent
-      │
-      ▼ (manual, belum otomatis)
+      ▼ (manual)
 kind cluster lokal (WSL)
-  - imagePullPolicy: Always
-  - deployment.yaml + service.yaml
 ```
 
-**Catatan penting:** deploy ke `kind` masih **manual** (`kubectl apply`),
-bukan otomatis dari CI — cluster ini jalan di laptop lokal (WSL), GitHub
-Actions (cloud) tidak punya akses ke situ. Auto-deploy baru masuk akal
-kalau cluster-nya juga selalu-online di cloud.
+`ai-triage` sengaja **tidak** termasuk `needs` milik `build-and-push`
+— supaya lambat/gagalnya AI triage tidak menghambat image ter-push.
+
+## Arsitektur Agent (LangGraph)
+
+```
+scan_results/*.json (mentah, per tool)
+        │
+        ├──> [JALUR CI] scan_parsers.py (as script) -> combined.json
+        │                -> dibaca step "Evaluate gates"
+        │
+        └──> [JALUR AGENT] security_triage_graph.py
+                            -> import combine_all() (fungsi yang sama)
+                            -> state["raw_findings"] di memori
+                            -> classify_severity
+                            -> [conditional: high/low]
+                                 |-> flag_for_review
+                                 |-> auto_note
+                            -> summarize:
+                                 1. Statistik dihitung Python (Counter)
+                                    -- BUKAN oleh LLM (LLM terbukti
+                                    halusinasi angka saat diminta
+                                    menghitung sendiri, lihat log Hari 11)
+                                 2. invoke_with_fallback(prompt):
+                                    - coba Gemini 3.6 Flash (retry 4x,
+                                      exponential backoff, HANYA untuk
+                                      GoogleGenerativeAIError)
+                                    - retry habis -> fallback ke Ollama
+                                      lokal (llama3.1:8b)
+                                    - dua-duanya gagal -> statistik
+                                      tetap tampil, narasi di-skip
+                                 3. Provider yang benar-benar merespons
+                                    ditandai eksplisit di output
+                            -> Severity + Summary (triage_output.md)
+```
+
+### Keputusan desain penting
+- **Statistik dihitung kode, bukan LLM.** Percobaan awal menyerahkan
+  perhitungan ke Gemini menghasilkan angka yang salah total (32
+  temuan asli dilaporkan jadi 13). LLM sekarang cuma menulis narasi
+  dari angka yang sudah pasti benar.
+- **Retry menangkap base exception class**, bukan class spesifik yang
+  ditebak — percobaan awal menangkap `google.genai.errors.ClientError`
+  ternyata tidak pernah ter-trigger karena `langchain_google_genai`
+  membungkus ulang error jadi exception class miliknya sendiri
+  (`GoogleGenerativeAIError` dan turunannya).
+- **`read_findings` testable by design** — skip baca file kalau
+  `raw_findings` sudah diisi manual (`is not None`, bukan truthy
+  check biasa — list kosong `[]` itu falsy di Python, sempat jadi
+  bug tersembunyi di Hari 13).
+- **Fallback provider ditandai eksplisit** di output — transparansi
+  penting: pembaca komentar PR harus tahu kalau ringkasan berasal
+  dari model cadangan, bukan model utama.
 
 ## Menjalankan Secara Lokal
 
-### Jalankan app langsung (tanpa container)
+### Jalankan app langsung
 ```bash
 git clone https://github.com/hendraazka/secure-fastapi-agent.git
 cd secure-fastapi-agent
-
-python -m venv venv
-source venv/bin/activate
+python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-pip install -r requirements-dev.txt   # kalau mau jalankan test juga
-
-uvicorn app.main:app --reload
-# cek di http://localhost:8000/health
+uvicorn app.main:app --reload   # http://localhost:8000/health
 ```
 
-### Jalankan test + coverage
+### Test + coverage
 ```bash
+pip install -r requirements-dev.txt
 pytest --cov=app --cov-report=term-missing
 ```
 
-### Build & jalankan via Docker
+### Jalankan agent triage secara lokal
 ```bash
-docker build -t secure-fastapi-agent:local .
-docker run -d -p 8000:8000 secure-fastapi-agent:local
+pip install -r requirements-agent.txt
+cp .env.example .env   # isi GOOGLE_API_KEY kamu
+python security_triage_graph.py
 ```
 
-### Deploy ke Kubernetes lokal (kind)
+### Uji skenario agent (tanpa perlu data scan asli)
 ```bash
+python test_scenarios.py
+```
+
+### Docker & Kubernetes
+```bash
+docker build -t secure-fastapi-agent:local .
 kind create cluster --name secure-fastapi-agent
 kind load docker-image secure-fastapi-agent:local --name secure-fastapi-agent
-
-kubectl apply -f k8s/deployment.yaml
-kubectl apply -f k8s/service.yaml
-
+kubectl apply -f k8s/
 kubectl port-forward svc/secure-fastapi-agent 8000:8000
 ```
 
@@ -120,18 +158,20 @@ Beberapa temuan security diterima sementara dengan alasan
 terdokumentasi di `.trivyignore` — lihat isi file tersebut untuk
 detail dan kapan harus ditinjau ulang.
 
-## Rencana Selanjutnya
-- [x] Perkuat pipeline: unit test, coverage gate, artifact report
-- [x] Containerize (Dockerfile, Trivy image scan)
-- [x] Deploy ke Kubernetes lokal (kind)
-- [x] Push image ke GHCR
-- [x] Otomasi build+push via CI/CD
-- [ ] Integrasi agent berbasis **LangGraph** untuk triase otomatis hasil scan
-      (baca `combined.json` → klasifikasi severity → ringkasan komentar PR)
-- [ ] Model: Gemini 2.5 Flash (free tier) sebagai default, Ollama lokal sebagai fallback
+## Roadmap
+- [x] Pipeline 5-gate security + unit test/coverage
+- [x] Containerize, deploy ke Kubernetes lokal (kind)
+- [x] CI/CD otomatis (build+push GHCR, gated oleh security+test)
+- [x] Agent LangGraph: triase otomatis, retry, fallback Ollama
+- [x] Integrasi agent ke pipeline CI (non-blocking)
+- [ ] (opsional, belum diputuskan) Posting hasil triage sebagai
+      komentar PR asli, bukan cuma artifact
+- [ ] (opsional, belum diputuskan) True-parallel job structure —
+      disengaja ditunda, lihat catatan di `learning-log/day-*`
 
 ## Catatan Belajar
 Proses, kendala, dan cara memperbaikinya didokumentasikan per tahap di
-[`learning-log/`](./learning-log/README.md) — termasuk kesalahan yang
-terjadi di sepanjang jalan (dan ada cukup banyak, terutama di Fase 2),
-bukan cuma hasil akhirnya.
+[`learning-log/`](./learning-log/README.md) — termasuk bug signifikan
+yang ditemukan lewat testing eksplisit (halusinasi angka LLM Hari 11,
+exception class salah tangkap Hari 16), bukan cuma hasil akhir yang
+kelihatan mulus.
